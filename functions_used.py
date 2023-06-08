@@ -31,6 +31,7 @@ from lifelines import KaplanMeierFitter
 from lifelines.statistics import logrank_test
 from scipy.spatial.distance import squareform
 from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
+from scipy.stats import mannwhitneyu
 from sklearn.metrics import silhouette_score
 import networkx as nx
 from tensorflow.keras.models import load_model
