@@ -293,4 +293,12 @@ G_2, subs_2 = functions.create_dendrogram_and_clustering_graph(similarity_matrix
 ![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/6cd13eb1-4b7c-4634-a65e-162d0789889f)
 
 
+Below are graphs with high shared nodes between the subgraphs of the two datasets (Green nodes exist in both graphs, Blue mean only exist in GSE96058, Red only in GSE81538)
 
+![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/5944fee8-c0a8-4f7b-b287-61ea64a6d8b3)
+![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/50bb9473-6ddc-4e21-9ce3-331e2e06d49e)
+![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/0c3005d0-852d-4f56-9f9d-9d97f316a0fb)
+![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/ec6ab3bc-be73-4c57-b6af-360ec6cdb2da)
+![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/0e57aa1c-6132-4624-a44e-bb9527f005e3)
+![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/d55ec50a-2033-4906-a43a-307754cfa8cf)
+![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/a87a95c9-85a1-47c7-ac54-7e22b67d1213)
