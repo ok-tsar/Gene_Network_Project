@@ -140,6 +140,30 @@ mlp_int = MLPClassifier(activation='logistic',
               hidden_layer_sizes= (32,32,32,16), learning_rate='adaptive',
               max_iter=10000)
 cutoff = functions.plot_metrics_vs_genes(mlp_int, x_train, y_train, importances, genes_for_consideration, 0.002)
+importances.head(cutoff).to_pickle('./gene_importances/top_genes.pkl')
+imp_genes = pd.read_pickle('./gene_importances/top_genes.pkl')
 ```
 ![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/43dccf54-9ca0-4fc0-bc9a-623ca2d7fdda)
+
+## --- IMPORTANT GENE EXPLORATION ---
+
+Now that we have the important genes in terms of our models decision making regarding the phenotype we can see what only modeling those genes looks like
+```
+important_gene = list(imp_genes.index)
+important_gene.insert(0, 'output')
+
+x_train_topGene, x_test_topGene, y_train, y_test = functions.train_test_splitting(GSE96058[important_gene])
+# uncomment to visualize top genes 
+# functions.visualize_training_data(x_train_topGene, y_train)
+
+del mlp_int
+mlp_int = MLPClassifier(hidden_layer_sizes=(32,32,32,16),
+                        learning_rate='adaptive', max_iter=10000)
+mlp_int.fit(x_train_topGene, y_train)
+acc, f1, auc, prc, prec, rec = functions.test_evaluation(mlp_int, x_test_topGene, x_train_topGene, 
+                                                         y_test, y_train)
+```
+
+![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/dea451e6-acab-4ac2-8a30-5caea5faf02a)
+
 
