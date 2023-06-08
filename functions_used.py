@@ -1260,7 +1260,7 @@ def plot_metrics_vs_genes(mlp_int, x_train, y_train, importances, genes_for_cons
     auc_avg_list = []
     
     # Iterate over all numbers of top genes to consider
-    for i in tqdm(range(len(genes_for_consideration))):
+    for i in tqdm(range(len(genes_for_consideration)), position=0, leave=True)):
         # Get top genes
         genes = list(importances['rank_total'].head(genes_for_consideration[i]).index)
         # Subset the data to these genes
