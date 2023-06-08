@@ -55,7 +55,7 @@ Build desired model to evaluate below are two example models
 ```
 # SKLEARN MLP (FULLY CONNECTED NETWORK) MODEL
 model_mlp = MLPClassifier(activation='logistic', alpha=0.05, hidden_layer_sizes= (32,32,32,16), learning_rate='adaptive', max_iter=10000)
-functions.model_evaluation(model_mlp, x_train_reduced, y_train, folds = 5)
+functions.model_evaluation(model_mlp, x_train_reduced, y_train, folds = 10)
 
 # KERAS (CNN NETWORK) MODEL
 def create_model():
@@ -81,7 +81,7 @@ encoder = LabelBinarizer()
 y_train = encoder.fit_transform(y_train)
 
 model_cnn = KerasClassifier(build_fn=create_model, epochs=100, batch_size=32, verbose=0)
-functions.model_evaluation(model_cnn, x_train_reduced, y_train, folds = 5)
+functions.model_evaluation(model_cnn, x_train_reduced, y_train, folds = 10)
 ```
 
 ### MLP MODEL
