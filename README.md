@@ -124,9 +124,9 @@ Important - if doing multiple runs of this function make sure to keep same N (i.
 
 ```
 functions.get_feature_importance(x_test, y_test, kernelpca_reducer, 
-                                 './model/model_cnn.h5','./feature_importance/model_cnn', 100)
+                                 './model/model_mlp','./feature_importance/model_mlp', 100)
                                  
-importances = functions.fetch_importances(GSE96058, './feature_importance/model_cnn')
+importances = functions.fetch_importances(GSE96058, './feature_importance/model_mlp')
 ```
 
 Selecting important genes
