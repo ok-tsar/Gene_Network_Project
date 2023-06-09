@@ -185,7 +185,7 @@ functions.plot_hist_and_value(auprs, prc)
 AUROC of our top genes in 99.3 top percentile of (5000) draws of same amount of randomly selected genes
 ![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/7002cb89-785e-441e-8eda-9d78f64e307c)
 
-AUPRC of our top genes in 99.3 top percentile of (5000) draws ofsame amount of randomly selected genes
+AUPRC of our top genes in 100 top percentile of (5000) draws ofsame amount of randomly selected genes
 ![image](https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/669bbe1b-ef84-429b-9dad-28c2d2f58594)
 
 Additionally when looking at same analysis for compleatly seperate dataset similar results.
