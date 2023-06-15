@@ -11,6 +11,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import scipy.stats as stats
+from numpy import linspace
 from itertools import permutations
 from tqdm import tqdm
 from umap import UMAP
@@ -2291,6 +2292,59 @@ def plot_survival_curves(df, column):
     results = logrank_test(group1['survival_day'], group2['survival_day'], event_observed_A=group1['survival_event'], event_observed_B=group2['survival_event'])
     print('Log-rank Test p-value:', results.p_value)
 
+
+def plot_survival_curves(df, column):
+    """
+    This function plots Kaplan-Meier survival curves for two groups based on an input column in the DataFrame.
+    If the column contains only binary values (0s and 1s), the function directly uses those values to split the data into two groups.
+    Otherwise, the function splits the data into two groups based on an optimal cutoff that minimizes the p-value of the log-rank test.
+
+    Parameters
+    ----------
+    df : pandas DataFrame
+        The input DataFrame containing survival data.
+    column : str
+        The name of the column used for grouping the survival data.
+
+    Returns
+    -------
+    None. This function only plots the survival curves and prints the log-rank test p-value.
+
+    """
+    # Instantiate the KaplanMeierFitter object
+    kmf = KaplanMeierFitter()
+
+    # If the column is binary (0s and 1s only), use those values directly
+    if set(df[column].unique()) == {0, 1}:
+        group1 = df[df[column] == 0]
+        group2 = df[df[column] == 1]
+    # Otherwise, find an optimal cutoff to split the dataframe into two groups
+    else:
+        min_p_val = 1
+        for potential_cutoff in linspace(df[column].min(), df[column].max(), 500):
+            temp_group1 = df[df[column] <= potential_cutoff]
+            temp_group2 = df[df[column] > potential_cutoff]
+            
+            # Perform the log-rank test for this potential cutoff
+            temp_results = logrank_test(temp_group1['survival_day'], temp_group2['survival_day'], event_observed_A=temp_group1['survival_event'], event_observed_B=temp_group2['survival_event'])
+
+            # If the p-value is less than the minimum found so far, update the min_p_val and the groups
+            if temp_results.p_value < min_p_val:
+                min_p_val = temp_results.p_value
+                group1 = temp_group1
+                group2 = temp_group2
+
+    # Generate the Kaplan-Meier survival estimate for the first group and update label with group size
+    kmf.fit(group1['survival_day'], event_observed=group1['survival_event'], label=f'{column} <= cutoff (n={len(group1)})')
+    ax = kmf.plot()
+
+    # Generate the Kaplan-Meier survival estimate for the second group, update label with group size, and plot on the same axes
+    kmf.fit(group2['survival_day'], event_observed=group2['survival_event'], label=f'{column} > cutoff (n={len(group2)})')
+    kmf.plot(ax=ax)
+
+    # Perform the log-rank test to compare the survival distributions of the two groups
+    results = logrank_test(group1['survival_day'], group2['survival_day'], event_observed_A=group1['survival_event'], event_observed_B=group2['survival_event'])
+    print('Log-rank Test p-value:', results.p_value)
     
 # def permute_and_predict(x_test, important_genes, model, reducer, n):
 #     # Initialize dataframes for storing the average changes
