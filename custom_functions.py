@@ -1,6 +1,7 @@
 
 # Basic Libraries
 import os
+import csv
 import math
 import random
 import numpy as np
@@ -142,6 +143,79 @@ def data_load(file_loc):
     print("data shape:",dat.shape)
 
     return dat
+
+def split_csv(file_path, output_folder, max_size=15):
+    """
+    Split a CSV file into multiple smaller CSV files.
+
+    Parameters
+    ----------
+    file_path : str
+        The file path of the large CSV file.
+    output_folder : str
+        The folder where the split CSV files will be stored.
+    max_size : int
+        Maximum size of each split file in MB.
+    """
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    chunk_size = max_size * (1024**2)  # Convert MB to bytes
+    chunk_number = 1
+    current_size = 0
+    header = True
+
+    with open(file_path, 'r', newline='') as f:
+        reader = csv.reader(f)
+        header_row = next(reader)
+
+        for row in reader:
+            if current_size == 0:
+                output_file = open(os.path.join(output_folder, f'chunk_{chunk_number}.csv'), 'w', newline='')
+                writer = csv.writer(output_file)
+                if header:
+                    writer.writerow(header_row)
+                    header = False
+
+            writer.writerow(row)
+            current_size += sum(len(str(field)) for field in row)
+
+            if current_size >= chunk_size:
+                output_file.close()
+                chunk_number += 1
+                current_size = 0
+                header = True
+
+    if not output_file.closed:
+        output_file.close()
+
+    print(f"Data split into {chunk_number} chunks in the folder '{output_folder}'.")
+
+def merge_load_csv(folder_path):
+    """
+    Merge multiple CSV files into a single DataFrame.
+
+    Parameters
+    ----------
+    folder_path : str
+        The folder path containing the CSV files.
+
+    Returns
+    -------
+    df : pandas DataFrame
+        The merged DataFrame.
+    """
+    df = pd.DataFrame()
+    file_paths = sorted([os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.csv')])
+
+    for file_path in file_paths:
+        temp_df = pd.read_csv(file_path, index_col=0)
+        df = pd.concat([df, temp_df])
+
+    df.columns = pd.MultiIndex.from_tuples([(col,) for col in df.columns])
+
+    print("data shape:", df.shape)
+    return df
 
 def train_test_splitting(data, t_size = 0.2, rand_state = 12):
     """
