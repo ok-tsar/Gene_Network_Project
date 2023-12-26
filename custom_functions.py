@@ -105,6 +105,23 @@ import tensorflow as tf
 from tensorflow.keras import layers
 from matplotlib.patches import Patch
 
+from itertools import product
+import warnings
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.cluster import (KMeans, DBSCAN, AgglomerativeClustering, SpectralClustering, 
+                             OPTICS, AffinityPropagation)
+from sklearn.mixture import GaussianMixture
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
+from tqdm import tqdm
+
+# ... [other imports]
+from scipy.spatial.distance import euclidean
+
+import numpy as np
+from scipy.spatial.distance import euclidean
+import numpy as np
+from scipy.spatial.distance import euclidean, cdist
 
 # ------------------------------------------------------------------------
 # ---------------- 1-modelTraining_geneRanking FUNCTIONS -----------------
@@ -2042,3 +2059,826 @@ def filter_top_features_with_output(x_test, y_test, importances_df, cutoff):
     filtered_x_test_with_output = x_test_with_output[['output'] + top_features]
     
     return filtered_x_test_with_output
+
+
+# ------------------------------------------------------------------------
+# ---------------- 2-cuttoffModeling_biologicalRelevence -----------------
+# ------------------------------------------------------------------------
+
+def load_keras_model(file_path, custom_objects=None):
+    """
+    Load a Keras model from a specified file path.
+    
+    Parameters:
+    - file_path: The path to the .h5 model file.
+    - custom_objects: Dictionary of custom objects, if any, required to load the model.
+    
+    Returns:
+    - Loaded Keras model.
+    """
+    return load_model(file_path, custom_objects=custom_objects)
+
+def average_rank(dfs, df_names):
+    """
+    Compute the average rank.
+    
+    Parameters:
+    - dfs: List of dataframes [cnn_importances, mlp_importances, log_importances]
+    - df_names: Names of the dataframes ['cnn', 'mlp', 'log'] for labeling
+    
+    Returns:
+    - results_df: A dataframe with ranks given by each dataframe and their average rank.
+    """
+    
+    # Initialize the results dataframe
+    results_df = pd.DataFrame(index=dfs[0].index)
+    
+    for df, name in zip(dfs, df_names):
+        results_df[name] = df.reindex(results_df.index)['rank_fin']
+        
+    # Compute average rank and add to results_df
+    results_df['avg_importance'] = results_df.mean(axis=1)
+    
+    # Sort by average rank (highest to lowest)
+    results_df = results_df.sort_values(by='avg_importance', ascending=False)
+    results_df.index = results_df.index.str.replace('.rescaled', '', regex=False)
+    
+    return results_df
+
+def compute_avg_prediction_change(dataset, importance_df, num_features, num_sims, model, pca_reducer):
+    """
+    Compute the average change in model predictions caused by permuting each top feature.
+
+    Parameters
+    ----------
+    dataset : pandas DataFrame
+        The dataset containing features and output.
+    importance_df : pandas DataFrame
+        DataFrame containing feature importances.
+    num_features : int
+        Number of top features to consider.
+    num_sims : int
+        Number of simulations to run for each feature.
+    model : Model object
+        Trained model for making predictions.
+    pca_reducer : PCA object
+        PCA reducer used for dimensionality reduction.
+
+    Returns
+    -------
+    result_df : pandas DataFrame
+        DataFrame showing the average prediction change for each feature.
+    """
+    # Separate the y values (outputs) from the feature matrix
+    y = dataset.iloc[:, 0].values
+    X = dataset.iloc[:, 1:]
+    
+    # Apply the PCA transformation
+    X_reduced = pca_reducer.transform(X)
+    
+    # Get baseline predictions using the provided model on the reduced data
+    baseline_preds = model.predict(X_reduced)
+    
+    # Get the top important features
+    top_features = importance_df.index[:num_features]
+    
+    # Initialize a dictionary to store results
+    results = {}
+    
+    # For each top important feature
+    for feature in tqdm(top_features, desc="Processing feature effects"):
+        changes = []
+        
+        # For each simulation
+        for _ in range(num_sims):
+            # Create a copy of the feature matrix
+            X_temp = X.copy()
+            
+            # Permute the current feature values
+            X_temp[feature] = np.random.permutation(X_temp[feature].values)
+            
+            # Apply the PCA transformation to the permuted feature matrix
+            X_temp_reduced = pca_reducer.transform(X_temp)
+            
+            # Predict using the permuted reduced feature matrix
+            permuted_preds = model.predict(X_temp_reduced)
+            
+            # Calculate the change in prediction for each patient
+            change = baseline_preds - permuted_preds
+            changes.append(change)
+        
+        # Calculate the average change in prediction for the current feature
+        avg_change = np.mean(changes, axis=0)
+        
+        # Store the results in the dictionary
+        results[feature] = avg_change.squeeze()
+
+    # Convert the dictionary to a dataframe
+    result_df = pd.DataFrame(results)
+    
+    return result_df
+
+
+
+def save_dataframe(df, location, filename):
+    """
+    Save a DataFrame to a specified location with a given filename.
+
+    Parameters:
+    - df: DataFrame to be saved
+    - location: Directory where the DataFrame should be saved
+    - filename: Name of the file (default is "random_results_cnn")
+
+    Returns:
+    None
+    """
+    full_path = f"{location}/{filename}.txt"
+    df.to_csv(full_path, sep='\t', index=False, mode='w+')
+    print(f"DataFrame saved at {full_path}")
+    
+def load_dataframe(location, filename):
+    """
+    Load a DataFrame from a specified location with a given filename.
+
+    Parameters:
+    - location: Directory from where the DataFrame should be loaded
+    - filename: Name of the file (default is "random_results_cnn")
+
+    Returns:
+    - df: Loaded DataFrame
+    """
+    full_path = f"{location}/{filename}.txt"
+    df = pd.read_csv(full_path, sep='\t')
+    return df
+
+def compute_gene_correlations(df):
+    """
+    Compute pairwise correlations between columns (genes) of the given dataframe.
+    
+    :param df: DataFrame where columns represent genes and rows represent patients.
+               The values are the average patient probability change when permuting each gene.
+    :return: Pairwise correlation matrix of genes.
+    """
+    return df.corr()
+
+def model_evaluation_duo(model, X1, y1, X2, y2):
+    """
+    Generate AUROC and AUPRC plots for model predictions on two datasets.
+    
+    Parameters
+    ----------
+    model : object
+        The trained model to be evaluated.
+    X1 : numpy array
+        The features of the first dataset to predict on.
+    y1 : numpy array
+        The true labels of the first dataset.
+    X2 : numpy array
+        The features of the second dataset to predict on.
+    y2 : numpy array
+        The true labels of the second dataset.
+    """
+    
+    # Predict the probabilities for the positive class for both datasets
+    y_score1 = model.predict(X1)
+    y_score2 = model.predict(X2)
+    
+    # Compute ROC curve and ROC area for both datasets
+    fpr1, tpr1, _ = roc_curve(y1, y_score1)
+    roc_auc1 = auc(fpr1, tpr1)
+    fpr2, tpr2, _ = roc_curve(y2, y_score2)
+    roc_auc2 = auc(fpr2, tpr2)
+    
+    # Compute precision-recall curve and PR area for both datasets
+    precision1, recall1, _ = precision_recall_curve(y1, y_score1)
+    pr_auc1 = auc(recall1, precision1)
+    precision2, recall2, _ = precision_recall_curve(y2, y_score2)
+    pr_auc2 = auc(recall2, precision2)
+    
+    # Plot ROC curve for both datasets
+    plt.figure(figsize=(11, 6))
+    plt.subplot(1, 2, 1)
+    plt.plot(fpr1, tpr1, color='blue', lw=2, label='AUROC - Test Set (%0.2f)' % roc_auc1)
+    plt.plot(fpr2, tpr2, color='orange', lw=2, label='AUROC - Validation Set (%0.2f)' % roc_auc2)
+    plt.plot([0, 1], [0, 1], color='grey', lw=2, label='Baseline (0.50)' % roc_auc2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic')
+    plt.legend(loc="lower right")
+    
+    # Plot precision-recall curve for both datasets
+    plt.subplot(1, 2, 2)
+    plt.plot(recall1, precision1, color='blue', lw=2, label='AUPRC - Test Set (%0.2f)' % pr_auc1)
+    plt.plot([0, 1], [np.mean(y1), np.mean(y1)], label='Baseline - Test Set (%0.2f)' % np.mean(y1), color='blue', lw=2, linestyle='--')
+
+    plt.plot(recall2, precision2, color='orange', lw=2, label='AUPRC - Validation Set (%0.2f)' % pr_auc2)
+    plt.plot([0, 1], [np.mean(y2), np.mean(y2)], label='Baseline - Validation Set (%0.2f)' % np.mean(y2), color='orange', lw=2, linestyle='--')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.ylim([0.0, 1.05])
+    plt.xlim([0.0, 1.0])
+    plt.title('Precision-Recall Curve')
+    plt.legend(loc="lower left")
+
+    
+    plt.tight_layout()
+    plt.show()
+    
+
+def combine_gene_correlations(df1, df2, n_samples1, n_samples2):
+    """
+    Combine pairwise correlations between genes of two dataframes by taking a weighted average based on the number of samples.
+
+    :param df1: Correlation matrix of genes from the first dataframe.
+    :param df2: Correlation matrix of genes from the second dataframe.
+    :param n_samples1: Number of samples used to compute correlations in df1.
+    :param n_samples2: Number of samples used to compute correlations in df2.
+    :return: Combined correlation matrix of genes.
+    """
+
+    # Ensure the two dataframes have the same columns and index
+    if set(df1.columns) != set(df2.columns) or set(df1.index) != set(df2.index):
+        raise ValueError("Both correlation matrices must have the same genes as columns and index.")
+
+    combined_corr = (df1 * n_samples1 + df2 * n_samples2) / (n_samples1 + n_samples2)
+
+    return combined_corr
+
+def dunn_index(X, labels):
+    unique_labels = np.unique(labels)
+    
+    inter_cluster_distances = []
+    intra_cluster_distances = []
+
+    # Compute inter-cluster distances
+    for i in range(len(unique_labels)):
+        for j in range(i+1, len(unique_labels)):
+            cluster_i = X[labels == unique_labels[i]]
+            cluster_j = X[labels == unique_labels[j]]
+            
+            # Efficiently compute pairwise distances between points in cluster_i and cluster_j
+            distances = cdist(cluster_i, cluster_j, 'euclidean')
+            inter_cluster_distances.append(np.min(distances))
+                        
+    # Compute intra-cluster distances
+    for label in unique_labels:
+        cluster = X[labels == label]
+        if len(cluster) > 1:  # Avoid single-point clusters for this computation
+            # Efficiently compute pairwise distances within the same cluster
+            distances = cdist(cluster, cluster, 'euclidean')
+            intra_distance = np.max(distances + np.eye(distances.shape[0]) * np.max(distances))
+            intra_cluster_distances.append(intra_distance)
+    
+    # If intra_cluster_distances is empty (i.e., every cluster has only one point), return 0
+    if not intra_cluster_distances:
+        return 0
+
+    return min(inter_cluster_distances) / max(intra_cluster_distances)
+
+def compare_clustering_methods(df, methods, min_clusters=5, max_clusters=20, scoring_type='silhouette',
+                              simulations = 10):
+    """
+    Compare different clustering algorithms and return the one with the best performance based on the selected scoring metric.
+    
+    Args:
+    - df (pd.DataFrame): Data to be clustered. It is expected that the DataFrame has already been preprocessed (e.g., normalized).
+    - methods (list): List of clustering methods to be evaluated.
+    - min_clusters (int, optional): Minimum number of clusters. Default is 5.
+    - max_clusters (int, optional): Maximum number of clusters. Default is 20.
+    - scoring_type (str, optional): Type of scoring metric. Choices are 'silhouette', 'davies', or 'calinski'. Default is 'silhouette'.
+    
+    Returns:
+    - list: A list of tuples, where each tuple consists of:
+        - (str) clustering method name,
+        - (dict) best parameters for that method based on the selected scoring metric,
+        - (float) the score achieved by the best parameter set for that method.
+    """
+    rand_seed = 27
+    np.random.seed(rand_seed)
+    # Parameter grids for various clustering methods
+    param_grid = {
+        'kmeans': {
+            'n_clusters': list(range(min_clusters, max_clusters + 1)),
+            'init': ['k-means++', 'random'],
+            'n_init': [10, 15, 20],
+            'max_iter': [300, 400, 500, 1000],
+            'random_state': [rand_seed]
+        },
+        'spectral': {
+            'n_clusters': list(range(min_clusters, max_clusters + 1)),
+            'eigen_solver': [None, 'arpack', 'lobpcg'],
+            'affinity': ['nearest_neighbors', 'rbf'],
+            'random_state': [rand_seed]
+        },
+        'agglomerative': {
+            'n_clusters': list(range(min_clusters, max_clusters + 1)),
+            'affinity': ['euclidean', 'l1', 'l2', 'manhattan', 'cosine'],
+            'linkage': ['ward', 'complete', 'average', 'single']
+        },
+        'dbscan': {
+            'eps': list(np.linspace(0.1, 5, 20)),
+            'min_samples': [5, 10, 15],
+            'metric': ['euclidean', 'l1', 'l2', 'manhattan', 'cosine']
+        },
+        'affinity_propagation': {
+            'damping': list(np.linspace(0.5, 0.99, 20)),
+            'affinity': ['euclidean', 'l1', 'l2', 'manhattan', 'cosine']
+        },
+        'optics': {
+            'min_samples': list(range(3, 30)),
+            'metric': ['euclidean', 'l1', 'l2', 'manhattan', 'cosine'],
+            'cluster_method': ['xi', 'dbscan']
+        },
+        'gmm': {
+            'n_components': list(range(min_clusters, max_clusters + 1)),
+            'covariance_type': ['full', 'tied', 'diag', 'spherical'],
+            'random_state': [rand_seed]
+        }
+    }
+
+    # Dictionaries to store best scores, parameters, and clusters for each method
+    best_scores = {}
+    best_params = {}
+    best_clusters = {}
+    best_davies = {}
+    best_calinski = {}
+    best_dunn = {}
+    
+    # Determine which scoring function to use based on scoring_type
+    scoring_funcs = {
+        'silhouette': silhouette_score,
+        'davies': davies_bouldin_score,
+        'calinski': calinski_harabasz_score,
+        'dunn': dunn_index
+    }
+
+    
+    if scoring_type not in scoring_funcs:
+        raise ValueError(f"Invalid scoring_type: {scoring_type}. Must be one of ['silhouette', 'davies', 'calinski'].")
+    
+    scoring_func = scoring_funcs[scoring_type]
+    
+    # Iterate over specified clustering methods
+    for method in methods:
+        if method in param_grid:
+            if scoring_type == "silhouette":
+                local_best_score = -1
+            elif scoring_type == "calinski":
+                local_best_score = -1
+            elif scoring_type == "dunn":
+                local_best_score = -1
+            else:
+                local_best_score = 1
+            local_best_params = None
+            local_best_clusters = None
+            
+            # Iterate over combinations of parameters for the current method
+            for params in tqdm(product(*param_grid[method].values()), desc=f"Trying {method} parameters"):
+                param_dict = dict(zip(param_grid[method].keys(), params))
+
+                for i in range(simulations):
+                
+                    # Suppress specific warnings related to SpectralClustering
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("ignore", message=".*affinity=precomputed.*", category=UserWarning, module="sklearn.cluster._spectral")
+
+                        try:
+                            # Select appropriate clustering algorithm based on the method and apply it to data
+                            if method == "kmeans":
+                                clusters = KMeans(**param_dict).fit_predict(df)
+                            elif method == "dbscan":
+                                clusters = DBSCAN(**param_dict).fit_predict(df)
+                                unique_clusters = len(np.unique(clusters))
+                                if unique_clusters < min_clusters or unique_clusters > max_clusters:
+                                    continue
+                            elif "agglomerative" in method:
+                                clusters = AgglomerativeClustering(**param_dict).fit_predict(df)
+                            elif method == "spectral":
+                                clusters = SpectralClustering(**param_dict).fit_predict(df)
+                            elif method == "affinity_propagation":
+                                clusters = AffinityPropagation(**param_dict).fit_predict(df)
+                            elif method == "optics":
+                                clusters = OPTICS(**param_dict).fit_predict(df)
+                                unique_clusters = len(np.unique(clusters))
+                                if unique_clusters < min_clusters or unique_clusters > max_clusters:
+                                    continue
+                            elif method == "gmm":
+                                gmm = GaussianMixture(**param_dict).fit(df)
+                                clusters = gmm.predict(df)
+                            else:
+                                continue  # Unknown method
+                        
+                            # Calculate scoring metric
+                            score = scoring_func(df, clusters)
+
+                            # Update best scores, parameters, and clusters if the current configuration is better
+                            # For silhouette and calinski higher is better, for davies lower is better
+                            is_better = (score > local_best_score) if scoring_type in ['silhouette', 'calinski','dunn'] else (score < local_best_score)
+                            if is_better:
+                                local_best_score = score
+                                local_best_params = param_dict
+                                local_best_clusters = clusters
+
+                        except Exception as e:
+                            continue
+                # Store best results for the current method
+                best_scores[method] = local_best_score
+                best_params[method] = local_best_params
+                best_clusters[method] = local_best_clusters
+
+    # Rank clustering methods by their best achieved score
+    reverse_order = scoring_type in ['silhouette', 'calinski', 'dunn']
+    rank_score = {k: v for k, v in sorted(best_scores.items(), key=lambda item: item[1], reverse=reverse_order)}
+
+    # Create tuples of method names, their best parameters, and achieved scores
+    best_methods_with_params_and_scores = [
+        (method, best_params[method], best_scores.get(method, None))
+        for method in methods if method in best_scores
+    ]
+
+    # Rank the methods according to the scoring_type selected
+    best_methods_with_params_and_scores = sorted(
+        best_methods_with_params_and_scores, 
+        key=lambda x: x[2], 
+        reverse=reverse_order
+    )
+    
+    def cluster_size_violation(clusters):
+        violations = 0
+        for label in np.unique(clusters):
+            if np.sum(clusters == label) < 4:
+                violations += 1
+        return violations
+
+    
+    # Plot the performance of each clustering method
+    plt.figure(figsize=(12, 6))
+    grey_out = [cluster_size_violation(best_clusters.get(method, [])) for method in rank_score.keys()]
+    bars = plt.bar(rank_score.keys(), rank_score.values(), color=['lightgrey' if violation else 'lightgrey' for violation in grey_out])
+    plt.title('Clustering Algorithms Performance')
+    plt.ylabel(scoring_type.capitalize())
+    xticks_pos = [bar.get_x() + bar.get_width() / 2 for bar in bars]
+    plt.xticks(xticks_pos, rank_score.keys(), rotation=45, ha='right')
+    plt.tight_layout()
+    plt.show()
+    
+    # Plot the clustering results for each method
+    n_rows = int(np.ceil(len(methods) / 3))
+    fig, axs = plt.subplots(n_rows, 3, figsize=(18, 6 * n_rows))
+    axs = axs.ravel()
+
+    for i, method in enumerate(methods):
+        if method in best_clusters and best_clusters[method] is not None:
+            sorted_idx = np.argsort(best_clusters[method])
+            df_sorted = df.iloc[sorted_idx, sorted_idx]
+            im = axs[i].imshow(df_sorted, cmap="RdBu", aspect="equal", vmin=-1, vmax=1)
+
+            current_idx = 0
+            for cluster_label in np.unique(best_clusters[method]):
+                size = np.sum(best_clusters[method][sorted_idx] == cluster_label)
+                rect = plt.Rectangle((current_idx-0.5, current_idx-0.5), size, size, fill=False, edgecolor="black", linewidth=2)
+                axs[i].add_patch(rect)
+                current_idx += size
+                
+            title_method = method.replace("_", " ").replace("agglomerative", "agglomerative-")
+            title_first_line = f"{title_method} - Clusters: {len(np.unique(best_clusters[method]))}"
+            if scoring_type == 'silhouette':
+                title_second_line = f"Silhouette: {best_scores[method]:.3f}"
+            elif scoring_type == 'davies':
+                title_second_line = f"Davies: {best_scores[method]:.3f}"
+            elif scoring_type == 'calinski':
+                title_second_line = f"Calinski: {best_scores[method]:.3f}"
+            elif scoring_type == 'dunn':
+                title_second_line = f"Dunn: {best_scores[method]:.3f}"
+            else:
+                raise ValueError(f"Invalid scoring_type: {scoring_type}. Must be one of ['silhouette', 'davies', 'calinski'].")            
+            
+
+            axs[i].set_title(title_first_line + "\n" + title_second_line)
+            axs[i].axis('off')
+
+    for i in range(len(methods), n_rows * 3):
+        axs[i].axis('off')
+
+    plt.tight_layout()
+    plt.show()
+
+
+    best_method_by_rank_score = list(rank_score.keys())[0]
+    
+    return best_methods_with_params_and_scores
+
+
+def save_data(data, location):
+    # Extract file name and extension
+    file_name = os.path.basename(location)
+    if isinstance(data, pd.DataFrame):
+        # Save as CSV for DataFrames
+        data.to_csv(location + '.csv', index=True)
+    elif isinstance(data, list):
+        # Save as TXT for lists
+        with open(location + '.txt', 'w') as f:
+            for item in data:
+                f.write("%s\n" % str(item))
+    elif isinstance(data, np.ndarray):
+        # Save as NPY for numpy arrays
+        np.save(location + '.npy', data)
+    else:
+        print("Unsupported data type.")
+
+
+def load_data(location):
+    # Extract file name and extension
+    file_name, file_extension = os.path.splitext(os.path.basename(location))
+    
+    if file_extension == '.csv':
+        # Load CSV for DataFrames
+        return pd.read_csv(location, index_col=0)
+    elif file_extension == '.txt':
+        # Load as simple list
+        with open(location, 'r') as f:
+            lines = f.readlines()
+            return [eval(line.strip()) for line in lines]
+    elif file_extension == '.npy':
+        # Load NPY for numpy arrays
+        return np.load(location)
+    else:
+        print("Unsupported file type.")
+        return None
+    
+from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering, SpectralClustering, AffinityPropagation, OPTICS
+from sklearn.mixture import GaussianMixture
+import numpy as np
+import seaborn as sns
+from scipy.cluster import hierarchy
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+from scipy.spatial.distance import pdist
+
+
+def run_and_plot_best_clustering(df, log_best_params, n_sims=10, scoring_type='silhouette', 
+                                 force_method=None, save_location_name=None):
+    """
+    Runs clustering using the best parameters and plots the results.
+
+    Parameters
+    ----------
+    df : pandas DataFrame
+        The dataset for clustering.
+    log_best_params : list
+        Log of the best parameters for each clustering method.
+    n_sims : int, optional
+        Number of simulations to run, by default 10.
+    scoring_type : str, optional
+        The scoring type to evaluate the clustering (e.g., 'silhouette', 'calinski'), by default 'silhouette'.
+    force_method : str, optional
+        Force a specific clustering method, by default None.
+    save_location_name : str, optional
+        The location and name to save the plot, by default None.
+
+    Returns
+    -------
+    tuple
+        Returns the best cluster assignments, linkage matrix, column names, and sorted best clusters.
+    """
+    # Extract the best parameters for each method
+    method_dict = {method: params for method, params, score in log_best_params}
+    
+    # Determine the best method and parameters
+    if force_method:
+        best_method = force_method
+        best_params = method_dict.get(force_method, {})
+    else:
+        best_method = log_best_params[0][0]
+        best_params = log_best_params[0][1]
+    
+    # Initialize variables for tracking the best and worst scores
+    best_score = float('-inf') if scoring_type in ['silhouette', 'calinski','dunn'] else float('inf')
+    worst_score = float('inf') if scoring_type in ['silhouette', 'calinski','dunn'] else float('-inf')
+    best_clusters = None
+    
+    best_score = float('-inf') if scoring_type in ['silhouette', 'calinski','dunn'] else float('inf')
+    worst_score = float('inf') if scoring_type in ['silhouette', 'calinski','dunn'] else float('-inf')
+    best_clusters = None
+    
+    # Define scoring functions
+    scoring_functions = {
+        'silhouette': silhouette_score,
+        'calinski': calinski_harabasz_score,
+        'davies': davies_bouldin_score,
+        'dunn': dunn_index
+    }
+    
+    # Run simulations to find the best clustering
+    for _ in tqdm(range(n_sims)):
+        method = best_method
+        param_dict = best_params
+        
+        # Choose the clustering algorithm based on the method
+        if method == "kmeans":
+            clusters = KMeans(**param_dict).fit_predict(df)
+        elif method == "dbscan":
+            clusters = DBSCAN(**param_dict).fit_predict(df)
+            unique_clusters = len(np.unique(clusters))
+            if unique_clusters < min_clusters or unique_clusters > max_clusters:
+                continue
+        elif "agglomerative" in method:
+            clusters = AgglomerativeClustering(**param_dict).fit_predict(df)
+        elif method == "spectral":
+            clusters = SpectralClustering(**param_dict).fit_predict(df)
+        elif method == "affinity_propagation":
+            clusters = AffinityPropagation(**param_dict).fit_predict(df)
+        elif method == "optics":
+            clusters = OPTICS(**param_dict).fit_predict(df)
+            unique_clusters = len(np.unique(clusters))
+            if unique_clusters < min_clusters or unique_clusters > max_clusters:
+                continue
+        elif method == "gmm":
+            gmm = GaussianMixture(**param_dict).fit(df)
+            clusters = gmm.predict(df)
+        else:
+            continue  # Unknown method
+                
+        # Calculate the score for the current clustering
+        score = scoring_functions[scoring_type](df, clusters)
+        
+        # Check and update the best score and best clusters
+        if scoring_type in ['silhouette', 'calinski', 'dunn']:
+            if score > best_score:
+                best_score = score
+                best_clusters = clusters
+        else:  # For 'davies' where lower is better
+            if score < best_score:
+                best_score = score
+                best_clusters = clusters         
+        
+        # Update the score range
+        worst_score = min(worst_score, score) if scoring_type in ['silhouette', 'calinski', 'dunn'] else max(worst_score, score)
+            
+    # Plot the best clustering
+    sorted_idx = np.argsort(best_clusters)
+    df_sorted = df.iloc[sorted_idx, :].iloc[:, sorted_idx]
+    
+    # Plot heatmap of correlations
+    g = sns.clustermap(df_sorted, method='average', cmap="RdBu", figsize=(20, 20),
+                       row_cluster=False, col_cluster=False, center=0, cbar_pos=(0.02, 0.65, 0.03, 0.18))
+    
+    distance_matrix = pdist(df_sorted)
+
+    g.ax_heatmap.set_xticks(np.arange(df_sorted.shape[0]))
+    g.ax_heatmap.set_yticks(np.arange(df_sorted.shape[1]))
+    
+    x_labels = [label.replace(".rescaled", "") for label in df_sorted.columns]
+    y_labels = [label.replace(".rescaled", "") for label in df_sorted.index]
+    
+    g.ax_heatmap.set_xticklabels(x_labels, size=8, rotation=90)
+    g.ax_heatmap.set_yticklabels(y_labels, size=8)
+    
+    unique_clusters = np.unique(best_clusters)
+    start_x = 0
+    for cluster_num in unique_clusters:
+        cluster_size = sum(best_clusters == cluster_num)
+        g.ax_heatmap.add_patch(plt.Rectangle((start_x, start_x), cluster_size, cluster_size, facecolor='none', edgecolor='black', lw=3))
+        start_x += cluster_size
+    
+    # g.fig.suptitle(f"Method: {best_method} --- Params: {best_params} --- Score: {best_score:.3f}\nScore Range: ({worst_score:.3f} - {best_score:.3f})")
+    g.ax_heatmap.text(0, 1.2, f"Method: {best_method} \nParams: {best_params} \nScore: {best_score:.3f} ({worst_score:.3f} - {best_score:.3f})", 
+                      size=20, ha="center", va="top", transform=g.ax_heatmap.transAxes)
+
+    print(f"Recommended number of clusters: {len(unique_clusters)}")
+    plt.show()
+    
+     # Save the figure to the specified location if provided
+    if save_location_name:
+        save_path = f"./results/plots/{save_location_name}.png"
+        g.savefig(save_path, dpi=600, bbox_inches='tight')  # Using high DPI for quality and bbox_inches to ensure labels are not cut off.
+    
+    linkage_matrix = hierarchy.linkage(distance_matrix, method='average')
+    #return best_clusters, linkage_matrix
+    return best_clusters, linkage_matrix, df_sorted.columns, best_clusters[sorted_idx]
+
+
+
+def get_scaled_node_sizes(log_importances):
+    """
+    Scale the rank_fin values in log_importances to a suitable range for visualization.
+    
+    :param log_importances: pandas DataFrame with rank_fin values.
+    :return: A dictionary with nodes and their scaled sizes.
+    """
+    # Selecting the 'rank_fin' column for the top 100 nodes
+    top_nodes = log_importances['rank_fin'].head(100)
+    
+    # No suffix removal; names remain unchanged
+    cleaned_names = top_nodes.index.tolist()
+
+    # Scaling values to be between 500 and 2000 for visualization purposes
+    scaled_sizes = 2000 * (top_nodes - top_nodes.min()) / (top_nodes.max() - top_nodes.min()) + 1000
+    
+    return dict(zip(cleaned_names, scaled_sizes))
+
+def plot_individual_clusters(df, clusters, title_prefix, importances, 
+                             critical_gene_number, K_space=None, 
+                             min_node_count=None, save=None):
+    """
+    Visualizes individual clusters from a dataset as network graphs.
+
+    Parameters
+    ----------
+    df : pandas DataFrame
+        The dataset for clustering analysis.
+    clusters : array-like
+        Cluster labels for each node in the dataset.
+    title_prefix : str
+        A prefix to be added to the title of each plot.
+    importances : pandas Series
+        Feature importances to determine node sizes in the network graph.
+    critical_gene_number : int
+        Number of top important genes to be highlighted.
+    K_space : float, optional
+        The optimal distance between nodes in the network graph, by default None.
+    min_node_count : int, optional
+        Minimum number of nodes required to form a cluster, by default None.
+    save : str, optional
+        Directory to save the plots, by default None.
+
+    Returns
+    -------
+    None
+        This function does not return anything. It plots and optionally saves network graphs.
+    """
+
+    unique_clusters = set(clusters)
+    
+    cluster_similarities = {}
+    for cluster_num in unique_clusters:
+        nodes = [idx for idx, cluster_id in enumerate(clusters) if cluster_id == cluster_num]
+        sub_df = df.iloc[nodes, nodes]
+        avg_similarity = np.mean(np.absolute(sub_df.values[np.triu_indices_from(sub_df, k=1)]))  
+        cluster_similarities[cluster_num] = avg_similarity
+        
+    sorted_clusters = sorted(cluster_similarities, key=cluster_similarities.get, reverse=True)
+    
+    node_sizes_dict = get_scaled_node_sizes(importances)
+    
+    critical_genes = set(importances.index[:critical_gene_number])
+
+    for cluster_num in sorted_clusters:
+        nodes = [idx for idx, cluster_id in enumerate(clusters) if cluster_id == cluster_num]
+        sub_df = df.iloc[nodes, nodes]
+        G = nx.from_pandas_adjacency(sub_df)
+        G.remove_edges_from(nx.selfloop_edges(G))
+        
+        edges_sorted_by_weight = sorted(G.edges(data=True), key=lambda x: abs(x[2]['weight']))
+        removed_edges = []
+
+        for edge in edges_sorted_by_weight:
+            u, v, data = edge
+            G.remove_edge(u, v)
+            removed_edges.append((u, v, data))
+                    
+            if min_node_count is not None and len(nodes) < min_node_count:
+                if any(len(edges) < 2 for node, edges in G.adjacency()):
+                    last_removed = removed_edges.pop()
+                    u, v, data = last_removed
+                    G.add_edge(u, v, **data)
+                    break
+            else:
+                if not nx.is_connected(G):
+                    last_removed = removed_edges.pop()
+                    u, v, data = last_removed
+                    G.add_edge(u, v, **data)
+                    break
+        
+        plt.figure(figsize=(20, 20))
+        pos = nx.spring_layout(G, k=K_space)
+        colors = ['black' if G[u][v]['weight'] > 0 else 'red' for u, v in G.edges]
+        
+        node_colors = ["lightgreen" if node in critical_genes else "lightblue" for node in G.nodes]
+        node_alpha = 1.0
+        labels = {node: node.replace('.rescaled', '') for node in G.nodes()}
+
+                
+        nx.draw_networkx_edges(G, pos, edge_color=colors, width=2)
+        nx.draw_networkx_labels(G, pos, labels=labels, font_size=14)
+        node_sizes = [node_sizes_dict.get(node, 100) * 5 for node in G.nodes()]
+        nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color=node_colors, alpha=node_alpha)
+        
+        title = f"{title_prefix} - Cluster {cluster_num+1} (Nodes: {len(nodes)}, Avg Absolute Similarity: {cluster_similarities[cluster_num]:.3f})"
+        plt.title(title, fontsize=16)
+        plt.axis('off')
+        plt.tight_layout()
+
+        # If a save path is provided, save the figure.
+        if save is not None:
+            if not os.path.isdir(save):
+                os.makedirs(save)
+            save_path = os.path.join(save, f"{title_prefix}_cluster_{cluster_num+1}_AvgSimilarity_{cluster_similarities[cluster_num]:.3f}.png")
+            plt.savefig(save_path, format='png', dpi=600)  # Save as high resolution for paper
+            print(f"Saved: {save_path}")
+        
+        plt.show()
+
