@@ -1,0 +1,6 @@
+('agglomerative', {'n_clusters': 10, 'affinity': 'euclidean', 'linkage': 'complete'}, 0.7373030624855601)
+('spectral', {'n_clusters': 5, 'eigen_solver': None, 'affinity': 'rbf', 'random_state': 27}, 0.7260878006579434)
+('optics', {'min_samples': 3, 'metric': 'cosine', 'cluster_method': 'xi'}, 0.7180113386457865)
+('kmeans', {'n_clusters': 9, 'init': 'k-means++', 'n_init': 15, 'max_iter': 300, 'random_state': 27}, 0.6689089385268526)
+('gmm', {'n_components': 7, 'covariance_type': 'spherical', 'random_state': 27}, 0.6511500117220895)
+('affinity_propagation', {'damping': 0.5, 'affinity': 'euclidean'}, 0.596769600878187)
