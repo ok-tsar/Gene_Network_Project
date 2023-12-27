@@ -1,5 +1,5 @@
 # Gene Network Project
-<img width="900" alt="image" src="https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/ee70b43c-7338-417e-93ea-d06d8a5257ae">
+<img width="1100" alt="image" src="https://github.com/ok-tsar/Gene_Network_Project/assets/54241448/ee70b43c-7338-417e-93ea-d06d8a5257ae">
 
 Integrative Framework for Model Based Phenotype-Specific Gene Analysis and Influence Network Construction.
 Overall Schematic (Left Panel): This schematic outlines our integrated, model-agnostic approach for inferring genotype-phenotype relationships using deep learning models. The two-step approach consists of (1) determining a trained model’s phenotype-specific gene importance, then (2) constructing gene influence networks from the model’s insights. This approach allows for use models as proxies for decoding biological processes, leveraging the trained model to elucidate complex genetic interactions. The data sources delineated for each procedural step pertain to the datasets employed to validate and demonstrate the efficacy of our approach.
